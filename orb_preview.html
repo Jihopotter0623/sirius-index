@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>중앙 코어 오브 미리보기</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;}
+  #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;}
+  canvas{display:block;}
+  #hint{position:fixed;bottom:16px;left:0;right:0;text-align:center;color:#c98f3a;font-family:sans-serif;font-size:12px;letter-spacing:2px;opacity:.6;}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c"></canvas></div>
+<div id="hint">중앙 코어 오브 미리보기 — 마우스로 드래그하면 회전합니다</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const canvas=document.getElementById('c');
+const W=Math.min(window.innerWidth,900), H=Math.min(window.innerHeight,900);
+const scene=new THREE.Scene();
+const camera=new THREE.PerspectiveCamera(42, W/H, 0.1, 100);
+camera.position.set(0,0,4.4);
+const renderer=new THREE.WebGLRenderer({canvas, antialias:true, alpha:true});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+renderer.setSize(W,H,false);
+
+const hub=new THREE.Group(); scene.add(hub);
+const GOLD=0xffa03a, GOLD_DIM=0x8a4e12, GOLD_BRIGHT=0xffe0a0, GOLD_HOT=0xfff6e0;
+
+function jitterGeo(geo, amt){
+  const pos=geo.attributes.position;
+  for(let i=0;i<pos.count;i++){
+    const v=new THREE.Vector3(pos.getX(i),pos.getY(i),pos.getZ(i));
+    const len=v.length();
+    v.normalize();
+    v.x+=(Math.random()-0.5)*amt; v.y+=(Math.random()-0.5)*amt; v.z+=(Math.random()-0.5)*amt;
+    v.normalize().multiplyScalar(len);
+    pos.setXYZ(i,v.x,v.y,v.z);
+  }
+  pos.needsUpdate=true;
+  geo.computeVertexNormals();
+}
+
+const baseGeo=new THREE.IcosahedronGeometry(1.0, 3);
+jitterGeo(baseGeo, 0.028);
+const baseEdges=new THREE.EdgesGeometry(baseGeo, 1);
+const baseMat=new THREE.LineBasicMaterial({color:GOLD_DIM, transparent:true, opacity:0.5, blending:THREE.AdditiveBlending, depthWrite:false});
+const baseMesh=new THREE.LineSegments(baseEdges, baseMat);
+baseMesh.userData.rotSpeed=0.04;
+hub.add(baseMesh);
+
+const base2Geo=new THREE.IcosahedronGeometry(1.006, 2);
+jitterGeo(base2Geo, 0.02);
+const base2Edges=new THREE.EdgesGeometry(base2Geo, 1);
+const base2Mat=new THREE.LineBasicMaterial({color:GOLD, transparent:true, opacity:0.55, blending:THREE.AdditiveBlending, depthWrite:false});
+const base2Mesh=new THREE.LineSegments(base2Edges, base2Mat);
+base2Mesh.userData.rotSpeed=-0.03;
+hub.add(base2Mesh);
+
+const base3Geo=new THREE.IcosahedronGeometry(1.012, 4);
+jitterGeo(base3Geo, 0.02);
+const base3Edges=new THREE.EdgesGeometry(base3Geo, 1);
+const base3Mat=new THREE.LineBasicMaterial({color:GOLD_BRIGHT, transparent:true, opacity:0.22, blending:THREE.AdditiveBlending, depthWrite:false});
+const base3Mesh=new THREE.LineSegments(base3Edges, base3Mat);
+base3Mesh.userData.rotSpeed=0.02;
+hub.add(base3Mesh);
+
+
+function makeBigRing(R, tiltX, tiltZ, dashed, color, opacity){
+  const segs=160; const pts=[];
+  for(let s=0;s<=segs;s++){
+    const a=(s/segs)*Math.PI*2;
+    pts.push(new THREE.Vector3(Math.cos(a)*R, Math.sin(a)*R, 0));
+  }
+  const geo=new THREE.BufferGeometry().setFromPoints(pts);
+  let mat, line;
+  if(dashed){
+    mat=new THREE.LineDashedMaterial({color, transparent:true, opacity, blending:THREE.AdditiveBlending, depthWrite:false, dashSize:0.05+Math.random()*0.04, gapSize:0.02+Math.random()*0.03});
+    line=new THREE.Line(geo, mat);
+    line.computeLineDistances();
+  } else {
+    mat=new THREE.LineBasicMaterial({color, transparent:true, opacity, blending:THREE.AdditiveBlending, depthWrite:false});
+    line=new THREE.Line(geo, mat);
+  }
+  line.rotation.x=tiltX; line.rotation.z=tiltZ;
+  return line;
+}
+const ringDefs=[
+  [1.12, 0.2, 0.05, false, GOLD_BRIGHT, 0.8],
+  [1.22, -0.35, 0.55, true, GOLD, 0.55],
+  [1.08, 0.5, -0.3, true, GOLD_BRIGHT, 0.5],
+  [1.3, -0.15, 1.05, false, GOLD_DIM, 0.4],
+];
+const rings=ringDefs.map(([R,tx,tz,dash,col,op])=>{
+  const r=makeBigRing(R,tx,tz,dash,col,op);
+  r.userData.rotSpeed=(Math.random()-0.5)*0.06;
+  hub.add(r);
+  return r;
+});
+
+function glowSpriteTexture(){
+  const c=document.createElement('canvas'); c.width=64; c.height=64;
+  const ctx=c.getContext('2d');
+  const g=ctx.createRadialGradient(32,32,0,32,32,32);
+  g.addColorStop(0,'rgba(255,246,220,1)');
+  g.addColorStop(0.35,'rgba(255,200,90,.85)');
+  g.addColorStop(1,'rgba(255,140,20,0)');
+  ctx.fillStyle=g; ctx.fillRect(0,0,64,64);
+  return new THREE.CanvasTexture(c);
+}
+function makeSphereSparks(count, size, opacity, rMin, rMax){
+  const dotTex=glowSpriteTexture();
+  const positions=new Float32Array(count*3);
+  for(let i=0;i<count;i++){
+    const u=Math.random(), v=Math.random();
+    const theta=2*Math.PI*u, phi=Math.acos(2*v-1);
+    const r=rMin+Math.random()*(rMax-rMin);
+    positions[i*3]=r*Math.sin(phi)*Math.cos(theta);
+    positions[i*3+1]=r*Math.sin(phi)*Math.sin(theta);
+    positions[i*3+2]=r*Math.cos(phi);
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions,3));
+  const mat=new THREE.PointsMaterial({size, map:dotTex, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, opacity});
+  return new THREE.Points(geo, mat);
+}
+const sparksFine=makeSphereSparks(420, 0.042, 0.85, 0.97, 1.06);
+sparksFine.userData.rotSpeed=0.08;
+hub.add(sparksFine);
+const sparksMid=makeSphereSparks(90, 0.08, 0.9, 1.0, 1.3);
+sparksMid.userData.rotSpeed=0.03;
+hub.add(sparksMid);
+const sparksBright=makeSphereSparks(45, 0.15, 1, 1.0, 1.7);
+sparksBright.userData.rotSpeed=-0.05;
+hub.add(sparksBright);
+
+function makeCityGridGeo(R, patchCount){
+  const positions=[];
+  for(let i=0;i<patchCount;i++){
+    const u=Math.random(), v=Math.random();
+    const theta=2*Math.PI*u, phi=Math.acos(2*v-1);
+    const n=new THREE.Vector3(Math.sin(phi)*Math.cos(theta), Math.sin(phi)*Math.sin(theta), Math.cos(phi));
+    const up=Math.abs(n.y)<0.98? new THREE.Vector3(0,1,0): new THREE.Vector3(1,0,0);
+    const tu=new THREE.Vector3().crossVectors(up,n).normalize();
+    const tv=new THREE.Vector3().crossVectors(n,tu).normalize();
+    const base=n.clone().multiplyScalar(R*1.004);
+    const size=0.05+Math.random()*0.16;
+    const lines=1+Math.floor(Math.random()*3);
+    for(let li=0; li<=lines; li++){
+      const t=-size/2+size*(li/lines);
+      const a0=base.clone().addScaledVector(tu,-size/2).addScaledVector(tv,t);
+      const a1=base.clone().addScaledVector(tu, size/2).addScaledVector(tv,t);
+      positions.push(a0.x,a0.y,a0.z, a1.x,a1.y,a1.z);
+    }
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions,3));
+  return geo;
+}
+const cityMat=new THREE.LineBasicMaterial({color:GOLD, transparent:true, opacity:0.5, blending:THREE.AdditiveBlending, depthWrite:false});
+const cityGrid=new THREE.LineSegments(makeCityGridGeo(1.0, 70), cityMat);
+cityGrid.userData.rotSpeed=0.05;
+hub.add(cityGrid);
+
+const coreGeo=new THREE.SphereGeometry(0.16, 16, 16);
+const coreMat=new THREE.MeshBasicMaterial({color:GOLD_HOT});
+const core=new THREE.Mesh(coreGeo, coreMat);
+hub.add(core);
+function glowSprite(sx, sy, colorStops){
+  const c=document.createElement('canvas'); c.width=128; c.height=128;
+  const ctx=c.getContext('2d');
+  const g=ctx.createRadialGradient(64,64,0,64,64,64);
+  colorStops.forEach(([off,col])=>g.addColorStop(off,col));
+  ctx.fillStyle=g; ctx.fillRect(0,0,128,128);
+  const tex=new THREE.CanvasTexture(c);
+  const mat=new THREE.SpriteMaterial({map:tex, transparent:true, blending:THREE.AdditiveBlending, depthWrite:false});
+  const spr=new THREE.Sprite(mat);
+  spr.scale.set(sx,sy,1);
+  return spr;
+}
+const coreGlow=glowSprite(1.7,1.7,[[0,'rgba(255,252,240,1)'],[0.22,'rgba(255,220,140,.9)'],[0.5,'rgba(255,175,50,.45)'],[1,'rgba(255,150,20,0)']]);
+hub.add(coreGlow);
+const outerHalo=glowSprite(4.6,4.6,[[0,'rgba(255,200,110,.28)'],[0.4,'rgba(255,160,60,.12)'],[1,'rgba(255,140,20,0)']]);
+hub.add(outerHalo);
+
+hub.rotation.x=0.15;
+
+let dragging=false, lastX=0, lastY=0, rotY=0, rotX=0.15, autoSpin=true;
+canvas.addEventListener('mousedown', e=>{ dragging=true; autoSpin=false; lastX=e.clientX; lastY=e.clientY; });
+window.addEventListener('mouseup', ()=>dragging=false);
+window.addEventListener('mousemove', e=>{
+  if(!dragging) return;
+  rotY += (e.clientX-lastX)*0.005;
+  rotX += (e.clientY-lastY)*0.005;
+  lastX=e.clientX; lastY=e.clientY;
+});
+
+let pulseT=0;
+(function animate(){
+  requestAnimationFrame(animate);
+  hub.children.forEach(c=>{ if(c.userData.rotSpeed) c.rotation.y+=c.userData.rotSpeed*0.02; });
+  if(autoSpin) hub.rotation.y+=0.004;
+  else hub.rotation.y=rotY;
+  hub.rotation.x=rotX;
+  pulseT+=0.03;
+  const pulse=1+Math.sin(pulseT)*0.12;
+  core.scale.setScalar(pulse);
+  coreGlow.scale.set(1.7*pulse,1.7*pulse,1);
+  renderer.render(scene,camera);
+})();
+</script>
+</body>
+</html>
